@@ -1,0 +1,926 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>MIDI to PT</title>
+<meta name="description" content="Adds the tempo to MIDI files exported from Ableton Live and merges every track into one file, ready for Pro Tools. Free, no sign-up, runs entirely in your browser.">
+<style>
+/* One workshop column: three numbered steps in the real order of the work, then the Pro Tools steps. */
+:root {
+  --bg: #eceeed;
+  --surface: #f7f8f7;
+  --ink: #141918;
+  --muted: #59625f;
+  --line: #cdd3d1;
+  --accent: #1c5873;
+  --accent-ink: #ffffff;
+  --warn: #8a5300;
+  --warn-bg: #f6ead6;
+  --err: #a3252b;
+  --err-bg: #f7e1e1;
+  --info-bg: #dde9ef;
+  /* System fonts: nothing loaded from a third-party service, so no visitor IP address is shared. */
+  --font-display: "Avenir Next Condensed", "Arial Narrow", system-ui, -apple-system, "Segoe UI", sans-serif;
+  --font-body: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  --font-mono: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+  color-scheme: light;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #111514;
+    --surface: #181d1c;
+    --ink: #e4e9e7;
+    --muted: #97a29e;
+    --line: #2b3331;
+    --accent: #79b6d3;
+    --accent-ink: #0b1418;
+    --warn: #e2b469;
+    --warn-bg: #2e2516;
+    --err: #ef9a9a;
+    --err-bg: #3a1c1d;
+    --info-bg: #1b2b33;
+    color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #111514;
+  --surface: #181d1c;
+  --ink: #e4e9e7;
+  --muted: #97a29e;
+  --line: #2b3331;
+  --accent: #79b6d3;
+  --accent-ink: #0b1418;
+  --warn: #e2b469;
+  --warn-bg: #2e2516;
+  --err: #ef9a9a;
+  --err-bg: #3a1c1d;
+  --info-bg: #1b2b33;
+  color-scheme: dark;
+}
+
+* { box-sizing: border-box; }
+html, body { margin: 0; }
+body {
+  background: var(--bg);
+  color: var(--ink);
+  font: 400 16px/1.55 var(--font-body);
+  -webkit-font-smoothing: antialiased;
+}
+.wrap {
+  max-width: 760px;
+  margin: 0 auto;
+  padding: 40px 20px 64px;
+  display: grid;
+  gap: 28px;
+}
+header { display: grid; gap: 10px; }
+h1 {
+  font: 600 2rem/1.15 var(--font-display);
+  letter-spacing: -0.01em;
+  margin: 0;
+  text-wrap: balance;
+}
+.lede { margin: 0; max-width: 62ch; color: var(--muted); }
+.lede strong { color: var(--ink); font-weight: 500; }
+
+.step {
+  display: grid;
+  gap: 14px;
+  padding-top: 22px;
+  border-top: 1px solid var(--line);
+}
+h2 {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  margin: 0;
+  font: 600 1.15rem/1.2 var(--font-display);
+  letter-spacing: 0.01em;
+  text-wrap: balance;
+}
+.num {
+  font: 500 0.85rem/1 var(--font-mono);
+  color: var(--accent);
+  border: 1px solid currentColor;
+  border-radius: 3px;
+  padding: 3px 6px;
+}
+.hint { margin: 0; font-size: 0.9rem; color: var(--muted); max-width: 64ch; }
+
+/* Drop zone */
+.drop {
+  position: relative;
+  display: grid;
+  gap: 4px;
+  justify-items: start;
+  padding: 22px 20px;
+  background: var(--surface);
+  border: 1.5px dashed var(--line);
+  border-radius: 6px;
+  cursor: pointer;
+  transition: border-color .15s, background-color .15s;
+}
+.drop:hover, .drop.over { border-color: var(--accent); }
+.drop.over { background: var(--info-bg); }
+.drop:focus-within { outline: 2px solid var(--accent); outline-offset: 2px; }
+.drop input { position: absolute; inset: 0; opacity: 0; cursor: pointer; width: 100%; }
+.drop strong { font-weight: 600; }
+.drop span { color: var(--muted); font-size: 0.92rem; }
+
+/* File table */
+.table-wrap { overflow-x: auto; }
+table { width: 100%; border-collapse: collapse; font-size: 0.93rem; }
+th {
+  text-align: left;
+  font: 500 0.75rem/1.2 var(--font-body);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--muted);
+  padding: 0 10px 8px 0;
+  border-bottom: 1px solid var(--line);
+  white-space: nowrap;
+}
+td { padding: 10px 10px 10px 0; border-bottom: 1px solid var(--line); vertical-align: middle; }
+th.n { text-align: right; }
+td.n { text-align: right; font-variant-numeric: tabular-nums; font-family: var(--font-mono); font-size: 0.88rem; white-space: nowrap; }
+.fname { font-weight: 500; word-break: break-word; }
+.fmeta { font: 400 0.78rem/1.3 var(--font-mono); color: var(--muted); margin-top: 2px; }
+tr.example td { color: var(--muted); }
+tr.example .fname { color: var(--ink); opacity: 0.75; }
+.pill {
+  display: inline-block;
+  font: 500 0.75rem/1 var(--font-body);
+  padding: 4px 7px;
+  border-radius: 3px;
+  white-space: nowrap;
+}
+.pill.notempo { color: var(--warn); background: var(--warn-bg); }
+.pill.tempo { color: var(--accent); background: var(--info-bg); }
+.pill.example { color: var(--muted); border: 1px solid var(--line); }
+.pill.error { color: var(--err); background: var(--err-bg); }
+.errmsg { color: var(--err); font-size: 0.82rem; margin-top: 3px; }
+.start {
+  width: 4.5em;
+  font: 400 0.9rem/1.2 var(--font-mono);
+  padding: 5px 6px;
+  text-align: right;
+}
+.rm {
+  background: none;
+  border: 1px solid transparent;
+  color: var(--muted);
+  font: 400 1.1rem/1 var(--font-body);
+  width: 30px; height: 30px;
+  border-radius: 4px;
+  cursor: pointer;
+}
+.rm:hover { color: var(--err); border-color: var(--line); }
+.sr { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+
+/* Fields */
+.fields { display: flex; flex-wrap: wrap; gap: 16px 20px; align-items: end; }
+.field { display: grid; gap: 6px; }
+.field.grow { flex: 1 1 200px; }
+label.lbl {
+  font: 500 0.75rem/1.2 var(--font-body);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--muted);
+}
+input[type="text"], input[type="number"], select {
+  font: 400 1rem/1.2 var(--font-body);
+  color: var(--ink);
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  padding: 9px 10px;
+  min-height: 42px;
+}
+input:focus-visible, select:focus-visible, button:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+#bpm {
+  width: 6.5em;
+  font: 500 1.5rem/1 var(--font-mono);
+  font-variant-numeric: tabular-nums;
+  padding: 8px 10px;
+}
+#bpm.invalid { border-color: var(--err); }
+.ts { display: flex; align-items: center; gap: 6px; }
+.ts input { width: 4em; font-family: var(--font-mono); }
+.ts select { font-family: var(--font-mono); }
+.ts span { color: var(--muted); font-family: var(--font-mono); }
+#song { width: 100%; }
+
+/* Buttons */
+.actions { display: flex; flex-wrap: wrap; gap: 12px 16px; align-items: center; }
+#go {
+  font: 600 1rem/1 var(--font-body);
+  color: var(--accent-ink);
+  background: var(--accent);
+  border: 0;
+  border-radius: 5px;
+  padding: 14px 20px;
+  cursor: pointer;
+}
+#go:disabled { background: var(--line); color: var(--muted); cursor: not-allowed; }
+#go:not(:disabled):hover { filter: brightness(1.08); }
+.secondary {
+  font: 500 0.95rem/1 var(--font-body);
+  color: var(--accent);
+  background: none;
+  border: 1px solid var(--accent);
+  border-radius: 5px;
+  padding: 13px 16px;
+  cursor: pointer;
+}
+.secondary:disabled { color: var(--muted); border-color: var(--line); cursor: not-allowed; }
+.secondary:not(:disabled):hover { background: var(--info-bg); }
+[hidden] { display: none !important; }
+.status { margin: 0; font-size: 0.92rem; }
+.status.ok { color: var(--accent); }
+.status.bad { color: var(--err); }
+.why { margin: 0; font-size: 0.9rem; color: var(--warn); }
+
+/* Pro Tools */
+ol { margin: 0; padding-left: 1.4em; display: grid; gap: 8px; max-width: 64ch; }
+ol li::marker { font-family: var(--font-mono); color: var(--muted); }
+code, .ui {
+  font: 500 0.88em/1 var(--font-mono);
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 3px;
+  padding: 2px 5px;
+  white-space: nowrap;
+}
+
+/* Support and sign-up */
+.support { display: grid; gap: 16px; }
+.support p { margin: 0; max-width: 62ch; }
+.kofi {
+  justify-self: start;
+  display: inline-block;
+  font: 600 1rem/1 var(--font-body);
+  color: var(--accent-ink);
+  background: var(--accent);
+  border-radius: 5px;
+  padding: 14px 20px;
+  text-decoration: none;
+}
+.kofi:hover { filter: brightness(1.08); }
+.kofi:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.support.nudge .kofi { box-shadow: 0 0 0 4px var(--info-bg); }
+.news { display: grid; gap: 10px; max-width: 520px; }
+.news-link { justify-self: start; text-decoration: none; display: inline-block; }
+form.news .row { display: flex; flex-wrap: wrap; gap: 10px; }
+form.news input[type="email"] {
+  flex: 1 1 240px;
+  font: 400 1rem/1.2 var(--font-body);
+  color: var(--ink);
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  padding: 9px 10px;
+  min-height: 42px;
+}
+form.news input[type="email"]:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+form.news label.consent { display: flex; gap: 10px; align-items: flex-start; font-size: 0.9rem; color: var(--muted); cursor: pointer; }
+form.news label.consent input { margin-top: 3px; accent-color: var(--accent); }
+.news-title { font: 600 1rem/1.3 var(--font-body); margin: 0; }
+
+/* Footer and legal notice */
+footer.legal {
+  border-top: 1px solid var(--line);
+  padding-top: 22px;
+  display: grid;
+  gap: 12px;
+  font-size: 0.85rem;
+  color: var(--muted);
+}
+footer.legal h2 { font-size: 1rem; }
+footer.legal h3 { margin: 6px 0 0; font: 600 0.85rem/1.3 var(--font-body); color: var(--ink); }
+footer.legal p { margin: 0; max-width: 70ch; }
+footer.legal a { color: var(--accent); }
+.todo { color: var(--err); font-weight: 600; }
+
+@media (max-width: 420px) {
+  .wrap { padding: 28px 16px 48px; }
+  h1 { font-size: 1.65rem; }
+}
+@media (prefers-reduced-motion: reduce) {
+  * { transition: none !important; }
+}
+footer.legal details { margin-top: 6px; }
+footer.legal summary { cursor: pointer; color: var(--accent); }
+footer.legal details p { margin-top: 8px; }
+</style>
+</head>
+<body>
+<main class="wrap">
+  <header>
+    <h1>MIDI to PT</h1>
+    <p class="lede">Ableton Live doesn't write the tempo into the MIDI files it exports, so Pro Tools reads them at 120 BPM. This page adds <strong>the right tempo</strong> and merges all your tracks into a single file. Free, no sign-up. Nothing is uploaded: everything happens in your browser.</p>
+  </header>
+
+  <section class="step" aria-labelledby="h-files">
+    <h2 id="h-files"><span class="num">1</span>Files</h2>
+    <label class="drop" id="drop" for="file-input">
+      <input type="file" id="file-input" multiple accept=".mid,.midi,audio/midi,audio/x-midi">
+      <strong>Drop your .mid files here</strong>
+      <span>or click to choose them. One exported clip per track.</span>
+    </label>
+    <div class="table-wrap">
+      <table id="files">
+        <thead>
+          <tr>
+            <th scope="col">File</th>
+            <th scope="col" class="n">Notes</th>
+            <th scope="col" class="n">Length</th>
+            <th scope="col">Start</th>
+            <th scope="col">Tempo found</th>
+            <th scope="col"><span class="sr">Remove</span></th>
+          </tr>
+        </thead>
+        <tbody id="rows"></tbody>
+      </table>
+    </div>
+    <p class="hint">“Start” is the bar where the clip began in Ableton. If a clip didn't start at bar 1, enter its bar here: no need to consolidate.</p>
+  </section>
+
+  <section class="step" aria-labelledby="h-tempo">
+    <h2 id="h-tempo"><span class="num">2</span>Tempo</h2>
+    <div class="fields">
+      <div class="field">
+        <label class="lbl" for="bpm">BPM</label>
+        <input id="bpm" type="text" inputmode="decimal" autocomplete="off" placeholder="e.g. 92">
+      </div>
+      <div class="field">
+        <label class="lbl" for="ts-num">Time signature</label>
+        <div class="ts">
+          <input id="ts-num" type="number" min="1" max="32" step="1" value="4" aria-label="Beats per bar">
+          <span>/</span>
+          <select id="ts-den" aria-label="Beat unit">
+            <option value="2">2</option>
+            <option value="4" selected>4</option>
+            <option value="8">8</option>
+            <option value="16">16</option>
+          </select>
+        </div>
+      </div>
+      <div class="field grow">
+        <label class="lbl" for="song">Song name</label>
+        <input id="song" type="text" value="Song" autocomplete="off">
+      </div>
+    </div>
+    <p class="hint" id="tempo-note">The exact BPM of your Ableton set, decimals included (92.5 for example). Fixed tempo only: tempo changes are not carried over.</p>
+  </section>
+
+  <section class="step" aria-labelledby="h-dl">
+    <h2 id="h-dl"><span class="num">3</span>Download</h2>
+    <div class="actions">
+      <button id="go" type="button" disabled>Download</button>
+      <button id="go-split" type="button" class="secondary" disabled>Separate tracks (.zip)</button>
+      <p class="why" id="why"></p>
+    </div>
+    <p id="status" class="status" role="status" aria-live="polite"></p>
+    <p class="hint">One .mid file with every track and the tempo. If you also need each track on its own, they come together in a .zip.</p>
+  </section>
+
+  <section class="step" aria-labelledby="h-pt">
+    <h2 id="h-pt">In Pro Tools</h2>
+    <ol>
+      <li><span class="ui">File › Import › MIDI</span>, then choose the <code>multitrack</code> file.</li>
+      <li>Destination <span class="ui">New Track</span>, location <span class="ui">Session Start</span>.</li>
+      <li>Tick <span class="ui">Import Tempo Map From MIDI File</span>. This time the file carries the right tempo: Pro Tools sets the session to it and creates one track per instrument.</li>
+    </ol>
+  </section>
+
+  <section class="step support" id="support" aria-labelledby="h-support">
+    <h2 id="h-support">Did it save you time?</h2>
+    <p>The tool is free and will stay free. If you'd like to chip in, give what you want on Ko-fi.</p>
+    <a class="kofi" id="kofi" href="https://ko-fi.com/adrienjolijo" target="_blank" rel="noopener">Support on Ko-fi</a>
+    <div class="news">
+      <p class="news-title">Get news from Joli-Studio</p>
+      <p class="hint">Tool updates and the occasional studio news, rarely. Unsubscribe anytime. Sign-up happens on a Google Form, which opens in a new tab.</p>
+      <a class="secondary news-link" id="news-link" href="https://docs.google.com/forms/d/e/1FAIpQLSf2HHQEv3DV1FY1CPtDqQanK01cvca3T4kHAXt76F0G1VhCag/viewform" target="_blank" rel="noopener">Sign up</a>
+    </div>
+  </section>
+
+  <footer class="legal" id="legal" aria-labelledby="h-legal">
+    <h2 id="h-legal">Legal notice and privacy</h2>
+    <h3>Publisher</h3>
+    <p>Adrien Jolivet, sole trader (entrepreneur individuel, EI), trading as Joli-Studio. SIRET&nbsp;999&nbsp;067&nbsp;622&nbsp;00020.<br>
+      Address: Peseto, 20135&nbsp;Conca, France. Phone: +33&nbsp;6&nbsp;76&nbsp;47&nbsp;51&nbsp;62. Email: <a href="mailto:jolijomusic@gmail.com">jolijomusic@gmail.com</a>.<br>
+      Publication director: Adrien Jolivet.</p>
+    <h3>Host</h3>
+    <p>GitHub, Inc., 88 Colin P. Kelly Jr. Street, San Francisco, CA 94107, USA. Phone: +1&nbsp;877&nbsp;448&nbsp;4820.</p>
+    <h3>Your files</h3>
+    <p>MIDI files are read and processed in your browser. They are never uploaded. This site sets no cookies and runs no analytics.</p>
+    <h3>Newsletter</h3>
+    <p>Sign-up goes through a Google Form, on Google's site. If you sign up, your email address and your consent are stored there on behalf of Joli-Studio. Google may store them outside the European Union. They are used only to send you news from Joli-Studio and are kept until you unsubscribe. You can withdraw your consent, or access, correct or delete your data, by writing to the email address above. You can also lodge a complaint with the CNIL, the French data protection authority (cnil.fr).</p>
+    <h3>Donations</h3>
+    <p>Donations are handled by Ko-fi and its payment providers. No payment data passes through this site.</p>
+    <details lang="fr">
+      <summary>Mentions légales (version française)</summary>
+      <p><strong>Éditeur :</strong> Adrien Jolivet, entrepreneur individuel (EI), nom commercial Joli-Studio. SIRET&nbsp;999&nbsp;067&nbsp;622&nbsp;00020. Adresse : Peseto, 20135&nbsp;Conca, France. Téléphone : 06&nbsp;76&nbsp;47&nbsp;51&nbsp;62. Email : jolijomusic@gmail.com. Directeur de la publication : Adrien Jolivet.</p>
+      <p><strong>Hébergeur :</strong> GitHub, Inc., 88 Colin P. Kelly Jr. Street, San Francisco, CA 94107, États-Unis. Téléphone : +1&nbsp;877&nbsp;448&nbsp;4820.</p>
+      <p><strong>Tes fichiers :</strong> les fichiers MIDI sont lus et transformés dans ton navigateur. Ils ne sont envoyés nulle part. Ce site ne dépose aucun cookie et ne mesure pas l'audience.</p>
+      <p><strong>Inscription aux nouvelles :</strong> l'inscription passe par un formulaire Google, sur le site de Google. Si tu t'inscris, ton adresse email et ton accord y sont enregistrés pour le compte de Joli-Studio. Google peut les conserver hors de l'Union européenne. Ils servent uniquement à t'envoyer des nouvelles de Joli-Studio et sont gardés jusqu'à ta désinscription. Tu peux retirer ton accord, consulter, corriger ou faire effacer tes données en écrivant à l'adresse email ci-dessus, et adresser une réclamation à la CNIL (cnil.fr).</p>
+      <p><strong>Dons :</strong> les dons sont gérés par Ko-fi et ses prestataires de paiement. Aucune donnée bancaire ne passe par ce site.</p>
+    </details>
+  </footer>
+</main>
+
+<script>
+// ==core-start==
+const MidiTempo = (() => {
+  function u16(d, i) { return (d[i] << 8) | d[i + 1]; }
+  function u32(d, i) { return ((d[i] << 24) >>> 0) + (d[i + 1] << 16) + (d[i + 2] << 8) + d[i + 3]; }
+
+  function readVarLen(d, p) {
+    let v = 0, b, n = 0;
+    do {
+      if (p.i >= d.length) throw new Error("Truncated file.");
+      b = d[p.i++];
+      v = v * 128 + (b & 0x7f);
+      if (++n > 4) throw new Error("Invalid MIDI data.");
+    } while (b & 0x80);
+    return v;
+  }
+
+  function pushVarLen(v, out) {
+    const tmp = [v & 0x7f];
+    v = Math.floor(v / 128);
+    while (v > 0) { tmp.unshift((v & 0x7f) | 0x80); v = Math.floor(v / 128); }
+    for (const b of tmp) out.push(b);
+  }
+
+  function latin(s) {
+    return String(s).normalize("NFD").replace(/[̀-ͯ]/g, "").replace(/[^\x20-\x7e]/g, "_");
+  }
+
+  function parseTrack(d) {
+    const p = { i: 0 };
+    let tick = 0, running = 0;
+    const events = [];
+    while (p.i < d.length) {
+      tick += readVarLen(d, p);
+      if (p.i >= d.length) break;
+      let status = d[p.i];
+      if (status & 0x80) p.i++;
+      else {
+        if (!running) throw new Error("Invalid MIDI data (running status).");
+        status = running;
+      }
+      if (status === 0xff) {
+        if (p.i >= d.length) throw new Error("Truncated file.");
+        const type = d[p.i++];
+        const len = readVarLen(d, p);
+        if (p.i + len > d.length) throw new Error("Truncated file.");
+        events.push({ tick, kind: "meta", type, data: d.slice(p.i, p.i + len) });
+        p.i += len;
+        if (type === 0x2f) break;
+      } else if (status === 0xf0 || status === 0xf7) {
+        const len = readVarLen(d, p);
+        if (p.i + len > d.length) throw new Error("Truncated file.");
+        events.push({ tick, kind: "sysex", status, data: d.slice(p.i, p.i + len) });
+        p.i += len;
+      } else if (status >= 0xf0) {
+        throw new Error("Invalid MIDI data (status " + status.toString(16) + ").");
+      } else {
+        running = status;
+        const hi = status & 0xf0;
+        const n = (hi === 0xc0 || hi === 0xd0) ? 1 : 2;
+        if (p.i + n > d.length) throw new Error("Truncated file.");
+        const bytes = new Uint8Array(1 + n);
+        bytes[0] = status;
+        for (let k = 0; k < n; k++) bytes[1 + k] = d[p.i++];
+        events.push({ tick, kind: "ch", bytes });
+      }
+    }
+    let name = "", bpm = null, ts = null, notes = 0, hasMusic = false, end = 0;
+    const dec = new TextDecoder("latin1");
+    for (const e of events) {
+      if (e.tick > end) end = e.tick;
+      if (e.kind === "meta") {
+        if (e.type === 0x03 && !name) name = dec.decode(e.data).trim();
+        if (e.type === 0x51 && bpm === null && e.data.length === 3) {
+          const us = (e.data[0] << 16) | (e.data[1] << 8) | e.data[2];
+          if (us > 0) bpm = 60000000 / us;
+        }
+        if (e.type === 0x58 && !ts && e.data.length >= 2) ts = { num: e.data[0], den: Math.pow(2, e.data[1]) };
+      } else {
+        hasMusic = true;
+        if (e.kind === "ch" && (e.bytes[0] & 0xf0) === 0x90 && e.bytes[2] > 0) notes++;
+      }
+    }
+    return { events, name, bpm, ts, notes, hasMusic, end };
+  }
+
+  function parse(buffer) {
+    const d = new Uint8Array(buffer);
+    if (d.length < 14 || String.fromCharCode(d[0], d[1], d[2], d[3]) !== "MThd") {
+      throw new Error("This is not a standard MIDI file.");
+    }
+    const hlen = u32(d, 4);
+    const format = u16(d, 8);
+    const division = u16(d, 12);
+    if (division & 0x8000) throw new Error("SMPTE timecode files are not supported.");
+    if (division === 0) throw new Error("Invalid MIDI resolution.");
+    let pos = 8 + hlen;
+    const tracks = [];
+    while (pos + 8 <= d.length) {
+      const id = String.fromCharCode(d[pos], d[pos + 1], d[pos + 2], d[pos + 3]);
+      const len = u32(d, pos + 4);
+      const start = pos + 8;
+      if (id === "MTrk") tracks.push(parseTrack(d.subarray(start, Math.min(start + len, d.length))));
+      pos = start + len;
+    }
+    if (!tracks.length) throw new Error("No track in this file.");
+    const music = tracks.filter(t => t.hasMusic);
+    const first = (key) => { for (const t of tracks) if (t[key]) return t[key]; return null; };
+    return {
+      format,
+      ppq: division,
+      tracks: music,
+      bpm: first("bpm"),
+      ts: first("ts"),
+      notes: music.reduce((s, t) => s + t.notes, 0),
+      end: tracks.reduce((m, t) => Math.max(m, t.end), 0),
+    };
+  }
+
+  // Removed from tracks: tempo, time signature, SMPTE offset, name (replaced), end of track (rewritten).
+  const DROP_META = new Set([0x51, 0x58, 0x54, 0x03, 0x2f, 0x00]);
+
+  function encodeTrack(events, endTick) {
+    const out = [];
+    let prev = 0;
+    for (const e of events) {
+      pushVarLen(Math.max(0, e.tick - prev), out);
+      prev = Math.max(prev, e.tick);
+      if (e.kind === "meta") { out.push(0xff, e.type); pushVarLen(e.data.length, out); for (const b of e.data) out.push(b); }
+      else if (e.kind === "sysex") { out.push(e.status); pushVarLen(e.data.length, out); for (const b of e.data) out.push(b); }
+      else for (const b of e.bytes) out.push(b);
+    }
+    pushVarLen(Math.max(0, endTick - prev), out);
+    out.push(0xff, 0x2f, 0x00);
+    const chunk = new Uint8Array(8 + out.length);
+    chunk.set([0x4d, 0x54, 0x72, 0x6b], 0);
+    const n = out.length;
+    chunk.set([(n >>> 24) & 255, (n >>> 16) & 255, (n >>> 8) & 255, n & 255], 4);
+    chunk.set(out, 8);
+    return chunk;
+  }
+
+  function textMeta(type, str, tick) {
+    const s = latin(str);
+    const data = new Uint8Array(s.length);
+    for (let i = 0; i < s.length; i++) data[i] = s.charCodeAt(i);
+    return { tick: tick || 0, kind: "meta", type, data };
+  }
+
+  function tempoMeta(tick, bpm) {
+    const us = Math.max(1, Math.min(0xffffff, Math.round(60000000 / bpm)));
+    return { tick, kind: "meta", type: 0x51, data: new Uint8Array([(us >> 16) & 255, (us >> 8) & 255, us & 255]) };
+  }
+
+  function sigMeta(tick, num, den) {
+    return { tick, kind: "meta", type: 0x58, data: new Uint8Array([num, Math.round(Math.log2(den)), 24, 8]) };
+  }
+
+  function smf(ppq, chunks) {
+    const head = new Uint8Array([0x4d, 0x54, 0x68, 0x64, 0, 0, 0, 6, 0, 1, (chunks.length >> 8) & 255, chunks.length & 255, (ppq >> 8) & 255, ppq & 255]);
+    return concat([head, ...chunks]);
+  }
+
+  function concat(arrs) {
+    const total = arrs.reduce((s, a) => s + a.length, 0);
+    const out = new Uint8Array(total);
+    let o = 0;
+    for (const a of arrs) { out.set(a, o); o += a.length; }
+    return out;
+  }
+
+  /**
+   * files: [{ base, ppq, tracks:[parsed track], startBar }]
+   * Renvoie { ppq, multi: Uint8Array, singles: [{ name, bytes }] }
+   */
+  function build({ files, bpm, num, den, song }) {
+    const ppq = files.reduce((m, f) => Math.max(m, f.ppq), 0) || 96;
+    const qPerBar = num * 4 / den;
+    const outTracks = [];
+    for (const f of files) {
+      const scale = ppq / f.ppq;
+      const offset = Math.round((Math.max(1, f.startBar) - 1) * qPerBar * ppq);
+      f.tracks.forEach((t, idx) => {
+        const label = f.tracks.length > 1 ? f.base + " - " + (t.name || "track " + (idx + 1)) : f.base;
+        const evs = [textMeta(0x03, label)];
+        for (const e of t.events) {
+          if (e.kind === "meta" && DROP_META.has(e.type)) continue;
+          evs.push(Object.assign({}, e, { tick: offset + Math.round(e.tick * scale) }));
+        }
+        const end = Math.max(offset + Math.round(t.end * scale), evs.reduce((m, e) => Math.max(m, e.tick), 0));
+        outTracks.push({ label, evs, end });
+      });
+    }
+    const maxEnd = outTracks.reduce((m, t) => Math.max(m, t.end), 0);
+    const conductor = (end) => encodeTrack([textMeta(0x03, song), sigMeta(0, num, den), tempoMeta(0, bpm)], end);
+    const multi = smf(ppq, [conductor(maxEnd), ...outTracks.map(t => encodeTrack(t.evs, t.end))]);
+    const singles = outTracks.map(t => ({ name: t.label, bytes: smf(ppq, [conductor(t.end), encodeTrack(t.evs, t.end)]) }));
+    return { ppq, multi, singles };
+  }
+
+  // Uncompressed zip ("stored" method), UTF-8 names.
+  const CRC = (() => {
+    const t = new Uint32Array(256);
+    for (let n = 0; n < 256; n++) {
+      let c = n;
+      for (let k = 0; k < 8; k++) c = (c & 1) ? (0xedb88320 ^ (c >>> 1)) : (c >>> 1);
+      t[n] = c >>> 0;
+    }
+    return t;
+  })();
+  function crc32(b) {
+    let c = 0xffffffff;
+    for (let i = 0; i < b.length; i++) c = CRC[(c ^ b[i]) & 0xff] ^ (c >>> 8);
+    return (c ^ 0xffffffff) >>> 0;
+  }
+  function zip(entries, date) {
+    const enc = new TextEncoder();
+    const now = date || new Date();
+    const dosTime = (now.getHours() << 11) | (now.getMinutes() << 5) | Math.floor(now.getSeconds() / 2);
+    const dosDate = ((now.getFullYear() - 1980) << 9) | ((now.getMonth() + 1) << 5) | now.getDate();
+    const parts = [], central = [];
+    let offset = 0;
+    for (const e of entries) {
+      const name = enc.encode(e.name);
+      const crc = crc32(e.bytes);
+      const size = e.bytes.length;
+      const lh = new DataView(new ArrayBuffer(30));
+      lh.setUint32(0, 0x04034b50, true); lh.setUint16(4, 20, true); lh.setUint16(6, 0x0800, true);
+      lh.setUint16(8, 0, true); lh.setUint16(10, dosTime, true); lh.setUint16(12, dosDate, true);
+      lh.setUint32(14, crc, true); lh.setUint32(18, size, true); lh.setUint32(22, size, true);
+      lh.setUint16(26, name.length, true); lh.setUint16(28, 0, true);
+      parts.push(new Uint8Array(lh.buffer), name, e.bytes);
+      const ch = new DataView(new ArrayBuffer(46));
+      ch.setUint32(0, 0x02014b50, true); ch.setUint16(4, 20, true); ch.setUint16(6, 20, true);
+      ch.setUint16(8, 0x0800, true); ch.setUint16(10, 0, true); ch.setUint16(12, dosTime, true);
+      ch.setUint16(14, dosDate, true); ch.setUint32(16, crc, true); ch.setUint32(20, size, true);
+      ch.setUint32(24, size, true); ch.setUint16(28, name.length, true); ch.setUint16(30, 0, true);
+      ch.setUint16(32, 0, true); ch.setUint16(34, 0, true); ch.setUint16(36, 0, true);
+      ch.setUint32(38, 0, true); ch.setUint32(42, offset, true);
+      central.push(new Uint8Array(ch.buffer), name);
+      offset += 30 + name.length + size;
+    }
+    const cd = concat(central);
+    const end = new DataView(new ArrayBuffer(22));
+    end.setUint32(0, 0x06054b50, true); end.setUint16(4, 0, true); end.setUint16(6, 0, true);
+    end.setUint16(8, entries.length, true); end.setUint16(10, entries.length, true);
+    end.setUint32(12, cd.length, true); end.setUint32(16, offset, true); end.setUint16(20, 0, true);
+    return concat([...parts, cd, new Uint8Array(end.buffer)]);
+  }
+
+
+  // Small example file shaped like an Ableton export: 96 PPQ, 4/4, no tempo.
+  function example(name, notes, lengthQ) {
+    const ppq = 96;
+    const evs = [textMeta(0x03, name), sigMeta(0, 4, 4)];
+    const on = [];
+    for (const [q, pitch, durQ, vel] of notes) {
+      on.push({ tick: Math.round(q * ppq), kind: "ch", bytes: new Uint8Array([0x90, pitch, vel]) });
+      on.push({ tick: Math.round((q + durQ) * ppq), kind: "ch", bytes: new Uint8Array([0x80, pitch, 64]) });
+    }
+    on.sort((a, b) => a.tick - b.tick || (a.bytes[0] === 0x80 ? -1 : 1));
+    return concat([
+      new Uint8Array([0x4d, 0x54, 0x68, 0x64, 0, 0, 0, 6, 0, 0, 0, 1, 0, ppq]),
+      encodeTrack(evs.concat(on), Math.round(lengthQ * ppq)),
+    ]);
+  }
+
+  return { parse, build, zip, crc32, example, latin };
+})();
+// ==core-end==
+
+(() => {
+  const $ = (id) => document.getElementById(id);
+  const rowsEl = $("rows"), bpmEl = $("bpm"), numEl = $("ts-num"), denEl = $("ts-den"), songEl = $("song");
+  const goEl = $("go"), whyEl = $("why"), statusEl = $("status"), dropEl = $("drop"), inputEl = $("file-input");
+  const splitEl = $("go-split");
+  const fmt = (n, d = 1) => n.toLocaleString("en-US", { maximumFractionDigits: d });
+  let busy = false;
+  let uid = 0;
+  let files = [];
+  let tsTouched = false;
+
+  function baseName(n) { return n.replace(/\.(mid|midi)$/i, ""); }
+
+  function addParsed(name, buffer, isExample) {
+    const f = { id: ++uid, name, base: baseName(name), isExample, startBar: 1 };
+    try { Object.assign(f, MidiTempo.parse(buffer)); if (!f.tracks.length) f.error = "No notes or MIDI events in this file."; }
+    catch (e) { f.error = e.message || "Unreadable file."; }
+    files.push(f);
+    return f;
+  }
+
+  function loadExamples() {
+    const bass = [];
+    for (let bar = 0; bar < 4; bar++) {
+      const root = [40, 40, 43, 38][bar];
+      bass.push([bar * 4, root, 0.75, 100], [bar * 4 + 1.5, root, 0.5, 90], [bar * 4 + 2, root + 7, 0.75, 96], [bar * 4 + 3.5, root + 12, 0.5, 88]);
+    }
+    const drums = [];
+    for (let q = 0; q < 16; q++) {
+      drums.push([q, 42, 0.25, q % 2 ? 70 : 90]);
+      if (q % 4 === 0 || q % 4 === 2) drums.push([q, 36, 0.25, 110]);
+      if (q % 4 === 1 || q % 4 === 3) drums.push([q, 38, 0.25, 105]);
+    }
+    addParsed("Bass.mid", MidiTempo.example("Bass", bass, 16).buffer, true);
+    const d = addParsed("Drums.mid", MidiTempo.example("Drums", drums, 16).buffer, true);
+    d.startBar = 5;
+  }
+
+  function readBpm() {
+    const raw = bpmEl.value.trim().replace(",", ".");
+    if (!raw) return { empty: true };
+    const v = Number(raw);
+    if (!isFinite(v) || v < 20 || v > 999) return { invalid: true };
+    return { value: Math.round(v * 1000) / 1000 };
+  }
+
+  function sig() {
+    const num = Math.min(32, Math.max(1, parseInt(numEl.value, 10) || 4));
+    return { num, den: parseInt(denEl.value, 10) || 4 };
+  }
+
+  function render() {
+    const { num, den } = sig();
+    rowsEl.textContent = "";
+    for (const f of files) {
+      const tr = document.createElement("tr");
+      if (f.isExample) tr.className = "example";
+
+      const tdName = document.createElement("td");
+      const nm = document.createElement("div"); nm.className = "fname"; nm.textContent = f.name;
+      tdName.append(nm);
+      if (!f.error) {
+        const meta = document.createElement("div"); meta.className = "fmeta";
+        meta.textContent = (f.tracks.length > 1 ? f.tracks.length + " tracks · " : "") + f.ppq + " PPQ";
+        tdName.append(meta);
+      } else {
+        const em = document.createElement("div"); em.className = "errmsg"; em.textContent = f.error;
+        tdName.append(em);
+      }
+
+      const tdNotes = document.createElement("td"); tdNotes.className = "n";
+      tdNotes.textContent = f.error ? "–" : String(f.notes);
+
+      const tdLen = document.createElement("td"); tdLen.className = "n";
+      if (f.error) tdLen.textContent = "–";
+      else { const bars = f.end / (f.ppq * num * 4 / den); tdLen.textContent = fmt(bars) + (Math.abs(bars - 1) < 0.05 ? " bar" : " bars"); }
+
+      const tdStart = document.createElement("td");
+      if (!f.error) {
+        const inp = document.createElement("input");
+        inp.type = "number"; inp.min = "1"; inp.step = "1"; inp.className = "start";
+        inp.id = "start-" + f.id; inp.value = String(f.startBar);
+        inp.setAttribute("aria-label", "Start bar for " + f.name);
+        inp.addEventListener("input", () => { const v = parseInt(inp.value, 10); f.startBar = v >= 1 ? v : 1; update(); });
+        tdStart.append(inp);
+      }
+
+      const tdState = document.createElement("td");
+      const pill = document.createElement("span");
+      if (f.error) { pill.className = "pill error"; pill.textContent = "Unreadable"; }
+      else if (f.isExample) { pill.className = "pill example"; pill.textContent = "Example"; }
+      else if (f.bpm) { pill.className = "pill tempo"; pill.textContent = fmt(f.bpm, 2) + " BPM"; }
+      else { pill.className = "pill notempo"; pill.textContent = "None"; }
+      tdState.append(pill);
+
+      const tdRm = document.createElement("td");
+      const rm = document.createElement("button");
+      rm.type = "button"; rm.className = "rm"; rm.textContent = "×";
+      rm.setAttribute("aria-label", "Remove " + f.name);
+      rm.addEventListener("click", () => { files = files.filter(x => x !== f); render(); });
+      tdRm.append(rm);
+
+      tr.append(tdName, tdNotes, tdLen, tdStart, tdState, tdRm);
+      rowsEl.append(tr);
+    }
+    update();
+  }
+
+  function usable() { return files.filter(f => !f.isExample && !f.error); }
+
+  function update() {
+    const b = readBpm();
+    bpmEl.classList.toggle("invalid", !!b.invalid);
+    const real = usable();
+    let why = "";
+    if (!real.length) why = files.some(f => f.isExample) ? "The “Example” rows show how it works: add your own files." : "Add at least one .mid file.";
+    else if (b.empty) why = "Enter the song's BPM.";
+    else if (b.invalid) why = "Invalid BPM: enter a number between 20 and 999.";
+    whyEl.textContent = why;
+    const nTracks = real.reduce((s, f) => s + f.tracks.length, 0);
+    goEl.disabled = !!why || busy;
+    goEl.textContent = "Download .mid" + (nTracks ? " (" + nTracks + (nTracks > 1 ? " tracks)" : " track)") : "");
+    splitEl.disabled = !!why || busy;
+  }
+
+  async function addFiles(list) {
+    const arr = Array.from(list || []);
+    if (!arr.length) return;
+    files = files.filter(f => !f.isExample);
+    for (const file of arr) addParsed(file.name, await file.arrayBuffer(), false);
+    const real = usable();
+    if (!bpmEl.value.trim()) {
+      const withTempo = real.find(f => f.bpm);
+      if (withTempo) {
+        bpmEl.value = String(Math.round(withTempo.bpm * 1000) / 1000);
+        $("tempo-note").textContent = "BPM taken from “" + withTempo.name + "”. Check that it matches your Ableton set.";
+      }
+    }
+    if (!tsTouched) {
+      const withTs = real.find(f => f.ts);
+      if (withTs && withTs.ts.num >= 1 && [2, 4, 8, 16].includes(withTs.ts.den)) {
+        numEl.value = String(withTs.ts.num);
+        denEl.value = String(withTs.ts.den);
+      }
+    }
+    setStatus("", "");
+    render();
+  }
+
+  function safe(s) { return String(s).replace(/[\/\\:*?"<>|\x00-\x1f]/g, "-").trim() || "Song"; }
+  function setStatus(msg, kind) { statusEl.textContent = msg; statusEl.className = "status" + (kind ? " " + kind : ""); }
+
+  function makeOutput() {
+    const b = readBpm();
+    const real = usable();
+    if (b.value === undefined || !real.length) return null;
+    const { num, den } = sig();
+    const song = safe(songEl.value);
+    const bpmLabel = String(b.value);
+    const stem = song + " " + bpmLabel + "bpm";
+    const out = MidiTempo.build({ files: real, bpm: b.value, num, den, song });
+    const used = new Set();
+    const singles = out.singles.map(s => {
+      let n = safe(s.name), k = 2;
+      while (used.has(n.toLowerCase())) n = safe(s.name) + " " + k++;
+      used.add(n.toLowerCase());
+      return { name: n + ".mid", bytes: s.bytes };
+    });
+    const count = singles.length + (singles.length > 1 ? " tracks" : " track");
+    return { stem, bpmLabel, count, multiName: stem + " - multitrack.mid", multi: out.multi, singles };
+  }
+
+  function saveDirect(bytes, filename, mime) {
+    const url = URL.createObjectURL(new Blob([bytes], { type: mime }));
+    const a = document.createElement("a");
+    a.href = url; a.download = filename;
+    document.body.append(a); a.click(); a.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 60000);
+  }
+
+  function run(kind) {
+    let o;
+    try { o = makeOutput(); }
+    catch (e) { setStatus("Couldn't build the file: " + (e.message || e), "bad"); return; }
+    if (!o) return;
+    busy = true; update();
+    try {
+      if (kind === "multi") {
+        saveDirect(o.multi, o.multiName, "audio/midi");
+        setStatus("Downloaded: " + o.multiName + " (" + o.count + " at " + o.bpmLabel + " BPM).", "ok");
+        $("support").classList.add("nudge");
+      } else {
+        const z = MidiTempo.zip(o.singles.map(s => ({ name: o.stem + " - tracks/" + s.name, bytes: s.bytes })));
+        saveDirect(z, o.stem + " - tracks.zip", "application/zip");
+        setStatus("Downloaded: " + o.stem + " - tracks.zip (" + o.count + ").", "ok");
+      }
+    } finally {
+      busy = false; update();
+    }
+  }
+
+  inputEl.addEventListener("change", () => { addFiles(inputEl.files); inputEl.value = ""; });
+  ["dragenter", "dragover"].forEach(t => dropEl.addEventListener(t, (e) => { e.preventDefault(); dropEl.classList.add("over"); }));
+  ["dragleave", "drop"].forEach(t => dropEl.addEventListener(t, (e) => { e.preventDefault(); dropEl.classList.remove("over"); }));
+  dropEl.addEventListener("drop", (e) => addFiles(e.dataTransfer && e.dataTransfer.files));
+  document.addEventListener("dragover", (e) => e.preventDefault());
+  document.addEventListener("drop", (e) => { if (!dropEl.contains(e.target)) { e.preventDefault(); addFiles(e.dataTransfer && e.dataTransfer.files); } });
+  const tempoNoteDefault = $("tempo-note").textContent;
+  bpmEl.addEventListener("input", () => { $("tempo-note").textContent = tempoNoteDefault; update(); });
+  numEl.addEventListener("input", () => { tsTouched = true; render(); });
+  denEl.addEventListener("change", () => { tsTouched = true; render(); });
+  goEl.addEventListener("click", () => run("multi"));
+  splitEl.addEventListener("click", () => run("split"));
+
+  loadExamples();
+  render();
+})();
+</script>
+</body>
+</html>
